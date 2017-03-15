@@ -1,0 +1,11 @@
+{
+    "description": "Android 7.1",
+    "name": "Android",
+    "supported_models": [
+        "Pi Model",
+        "Pi 2",
+        "Pi 3"
+    ],
+    "url": "https://git.embedded.rwth-aachen.de/rtandroid/downloads/raspberry-pi/",
+    "version": "rtAndroid"
+}

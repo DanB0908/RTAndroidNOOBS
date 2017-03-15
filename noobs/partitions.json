@@ -1,0 +1,32 @@
+{
+    "partitions": [
+        {
+            "empty_fs" : true,
+            "filesystem_type": "FAT",
+            "label": "boot",
+            "partition_size_nominal": 512,
+            "want_maximised": false
+        },
+        {
+            "empty_fs" : true,
+            "filesystem_type": "ext4",
+            "label": "system",
+            "partition_size_nominal": 2050,
+            "want_maximised": false
+        },
+        {
+            "empty_fs" : true,
+            "filesystem_type": "ext4",
+            "label": "cache",
+            "partition_size_nominal": 512,
+            "want_maximised": false
+        },
+        {
+            "empty_fs" : true,
+            "filesystem_type": "ext4",
+            "label": "userdata",
+            "partition_size_nominal": 1024,
+            "want_maximised": true
+        }
+    ]
+}
