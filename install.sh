@@ -18,7 +18,8 @@
 
 #
 # Android image installation script for Raspberry Pi 3
-# Author: Igor Kalkov
+# Orignal Author: Igor Kalkov
+# Modified By: Dan B.
 # https://github.com/RTAndroid/android_vendor_brcm_rpi3_scripts/blob/aosp-7.1/scripts/install.sh
 #
 
@@ -35,6 +36,7 @@ SIZE_P1=512   # exact size of the partition 1 (boot) in MB
 SIZE_P2=2048  # exact size of the partition 2 (system) in MB
 SIZE_P3=512   # exact size of the partition 3 (cache) in MB
 SIZE_P4=1024  # minimum size of the partition 4 (userdata) in MB
+SIZE_NOOBS=2060 # size required for NOOBS install (boot & system.img) in MB
 
 # ------------------------------------------------
 # Helping functions
@@ -44,10 +46,11 @@ show_help()
 {
 cat << EOF
 USAGE:
-  $0 [-f] [-h] [-p] /dev/NAME
+  $0 [-f] [-h] [-n] [-p] /dev/NAME
 OPTIONS:
   -f  Format userdata and cache
   -h  Show help
+  -n  Copy to drive in NOOBS format
   -p  (Re-)partition the sdcard
 EOF
 }
@@ -74,19 +77,13 @@ check_device()
 
     if [[ -z "$DEVICE_LOCATION" ]]; then
         echo ""
-        echo "ERR: device location cannot be empty."
+        echo "ERR: device location not valid."
         exit 1
     fi
 
     if [[ ! -b "$DEVICE_LOCATION" ]]; then
         echo ""
         echo "ERR: no block device was found in $DEVICE_LOCATION!"
-        exit 1
-    fi
-
-    if [[ "$DEVICE_LOCATION" == "/sd[[:alpha:]][[:digit:]]" ]]; then
-        echo ""
-        echo "ERR: you cannot install RTAndroid on a single partition"
         exit 1
     fi
 
@@ -99,7 +96,6 @@ check_device()
     if [[ ! -f "$SIZE_FILE" ]]; then
         echo ""
         echo "ERR: can't detect the size of the sdcard!"
-        exit 1
     fi
 
     REQUIRED_SIZE_MB=$((SIZE_P1 + SIZE_P2 + SIZE_P3 + SIZE_P4))
@@ -116,7 +112,7 @@ check_device()
     fi
 
     # some card readers mount the sdcard as /dev/mmcblkXp? instead of /dev/sdX?
-    if [[ "$DEVICE_NAME" == "mmcblk"* ]]; then
+    if [[ $DEVICE_NAME == "mmcblk"* ]]; then
         echo " * Using device suffix 'p' (mmcblk device)"
         DEVICE_SUFFIX="p"
     fi
@@ -136,12 +132,23 @@ check_partitions()
     # allow all numbers if we are going to re-partition it anyways
     if [ "$PARTITION" = true ]; then
         echo "  - ignoring this count due to upcoming partitioning"
-        PARTITION_COUNT=4
+        if [ "$NOOBS_INSTALL" = true ]; then # Modified for NOOBS
+            PARTITION_COUNT=1
+        else
+            PARTITION_COUNT=4
+        fi
     fi
 
-    if [ "${PARTITION_COUNT:-0}" -ne 4 ]; then
-        echo "ERR: bad device in $DEVICE_LOCATION!"
-        exit 1
+    if [ "$NOOBS_INSTALL" = true ]; then # Modified for NOOBS   
+        if [ "${PARTITION_COUNT:-0}" -lt "1" ]; then
+            echo "ERR: bad device in $DEVICE_LOCATION!"
+            exit 1
+        fi
+    else        
+        if [ "${PARTITION_COUNT:-0}" -ne "4" ]; then
+            echo "ERR: bad device in $DEVICE_LOCATION!"
+            exit 1
+        fi
     fi
 }
 
@@ -155,63 +162,76 @@ check_sizes()
         echo "ERR: can't detect the size of the boot partition!"
         exit 1
     fi
+    
+    
+    if [ "$NOOBS_INSTALL" = true ]; then # Modified for NOOBS
+        PARTITION1_SIZE_MB=$(($PARTITION1_SIZE_SECTORS*512/1024/1024))
 
-    PARTITION1_SIZE_MB=$(($PARTITION1_SIZE_SECTORS*512/1024/1024))
-    echo "  - boot) available: $PARTITION1_SIZE_MB MB, required: $SIZE_P1 MB"
+        if [[ $PARTITION1_SIZE_MB -lt $SIZE_NOOBS ]];
+        then
+            echo ""
+            echo "ERR: the partition doesn't provide enough space!"
+            exit 1
+        fi
+        
+    else
+        PARTITION1_SIZE_MB=$(($PARTITION1_SIZE_SECTORS*512/1024/1024))
+        echo "  - boot) available: $PARTITION1_SIZE_MB MB, required: $SIZE_P1 MB"
 
-    if [[ $PARTITION1_SIZE_MB -lt $SIZE_P1 ]];
-    then
-        echo ""
-        echo "ERR: the 'boot' partition doesn't provide enough space!"
-        exit 1
-    fi
+        if [[ $PARTITION1_SIZE_MB -lt $SIZE_P1 ]];
+        then
+            echo ""
+            echo "ERR: the 'boot' partition doesn't provide enough space!"
+            exit 1
+        fi
 
-    PARTITION2_SIZE_SECTORS=$(cat "/sys/block/${DEVICE_NAME}/${DEVICE_NAME}${DEVICE_SUFFIX}2/size")
-    if [[ -z "$PARTITION2_SIZE_SECTORS" ]]; then
-        echo "ERR: can't detect the size of the system partition!"
-        exit 1
-    fi
+        PARTITION2_SIZE_SECTORS=$(cat "/sys/block/${DEVICE_NAME}/${DEVICE_NAME}${DEVICE_SUFFIX}2/size")
+        if [[ -z "$PARTITION2_SIZE_SECTORS" ]]; then
+            echo "ERR: can't detect the size of the system partition!"
+            exit 1
+        fi
 
-    PARTITION2_SIZE_MB=$(($PARTITION2_SIZE_SECTORS*512/1024/1024))
-    echo "  - system) available: $PARTITION2_SIZE_MB MB, required: $SIZE_P2 MB"
+        PARTITION2_SIZE_MB=$(($PARTITION2_SIZE_SECTORS*512/1024/1024))
+        echo "  - system) available: $PARTITION2_SIZE_MB MB, required: $SIZE_P2 MB"
 
-    if [[ $PARTITION2_SIZE_MB -lt $SIZE_P2 ]];
-    then
-        echo ""
-        echo "ERR: the 'system' partition doesn't provide enough space!"
-        exit 1
-    fi
+        if [[ $PARTITION2_SIZE_MB -lt $SIZE_P2 ]];
+        then
+            echo ""
+            echo "ERR: the 'system' partition doesn't provide enough space!"
+            exit 1
+        fi
 
-    PARTITION3_SIZE_SECTORS=$(cat "/sys/block/${DEVICE_NAME}/${DEVICE_NAME}${DEVICE_SUFFIX}3/size")
-    if [[ -z "$PARTITION3_SIZE_SECTORS" ]]; then
-        echo "ERR: can't detect the size of the cache partition!"
-        exit 1
-    fi
+        PARTITION3_SIZE_SECTORS=$(cat "/sys/block/${DEVICE_NAME}/${DEVICE_NAME}${DEVICE_SUFFIX}3/size")
+        if [[ -z "$PARTITION3_SIZE_SECTORS" ]]; then
+            echo "ERR: can't detect the size of the cache partition!"
+            exit 1
+        fi
 
-    PARTITION3_SIZE_MB=$(($PARTITION3_SIZE_SECTORS*512/1024/1024))
-    echo "  - cache) available: $PARTITION3_SIZE_MB MB, required: $SIZE_P3 MB"
+        PARTITION3_SIZE_MB=$(($PARTITION3_SIZE_SECTORS*512/1024/1024))
+        echo "  - cache) available: $PARTITION3_SIZE_MB MB, required: $SIZE_P3 MB"
 
-    if [[ $PARTITION3_SIZE_MB -lt $SIZE_P3 ]];
-    then
-        echo ""
-        echo "ERR: the 'cache' partition doesn't provide enough space!"
-        exit 1
-    fi
+        if [[ $PARTITION3_SIZE_MB -lt $SIZE_P3 ]];
+        then
+            echo ""
+            echo "ERR: the 'cache' partition doesn't provide enough space!"
+            exit 1
+        fi
 
-    PARTITION4_SIZE_SECTORS=$(cat "/sys/block/${DEVICE_NAME}/${DEVICE_NAME}${DEVICE_SUFFIX}4/size")
-    if [[ -z "$PARTITION4_SIZE_SECTORS" ]]; then
-        echo "ERR: can't detect the size of the data partition!"
-        exit 1
-    fi
+        PARTITION4_SIZE_SECTORS=$(cat "/sys/block/${DEVICE_NAME}/${DEVICE_NAME}${DEVICE_SUFFIX}4/size")
+        if [[ -z "$PARTITION4_SIZE_SECTORS" ]]; then
+            echo "ERR: can't detect the size of the data partition!"
+            exit 1
+        fi
 
-    PARTITION4_SIZE_MB=$(($PARTITION4_SIZE_SECTORS*512/1024/1024))
-    echo "  - data) available: $PARTITION4_SIZE_MB MB, required: $SIZE_P4 MB"
+        PARTITION4_SIZE_MB=$(($PARTITION4_SIZE_SECTORS*512/1024/1024))
+        echo "  - data) available: $PARTITION4_SIZE_MB MB, required: $SIZE_P4 MB"
 
-    if [[ $PARTITION4_SIZE_MB -lt $SIZE_P4 ]];
-    then
-        echo ""
-        echo "ERR: the 'data' partition doesn't provide enough space!"
-        exit 1
+        if [[ $PARTITION4_SIZE_MB -lt $SIZE_P4 ]];
+        then
+            echo ""
+            echo "ERR: the 'data' partition doesn't provide enough space!"
+            exit 1
+        fi
     fi
 }
 
@@ -252,42 +272,51 @@ create_partitions()
 
     echo " * Start partitioning..."
 
-    # 1. partition -> boot
-    echo ""
-    echo "  - creating 'boot'"
-    printf "n\np\n1\n\n+${SIZE_P1}M\nw\n" | sudo fdisk $DEVICE_LOCATION
-    wait_for_device
+    if [ "$NOOBS_INSTALL" = true ]; then # Modified for NOOBS
+    
+        # 1. partition -> NOOBS
+        echo ""
+        echo "  - creating 'boot'"
+        printf "n\np\n1\n\n\nt\nb\nw\n" | sudo fdisk $DEVICE_LOCATION
+        wait_for_device
+    else    
+        # 1. partition -> boot
+        echo ""
+        echo "  - creating 'boot'"
+        printf "n\np\n1\n\n+${SIZE_P1}M\nw\n" | sudo fdisk $DEVICE_LOCATION
+        wait_for_device
 
 
-    # 2. partition -> system
-    echo ""
-    echo "  - creating 'system'"
-    printf "n\np\n2\n\n+${SIZE_P2}M\nw\n" | sudo fdisk $DEVICE_LOCATION
-    wait_for_device
+        # 2. partition -> system
+        echo ""
+        echo "  - creating 'system'"
+        printf "n\np\n2\n\n+${SIZE_P2}M\nw\n" | sudo fdisk $DEVICE_LOCATION
+        wait_for_device
 
-    # 3. partition -> cache
-    echo ""
-    echo "  - creating 'cache'"
-    printf "n\np\n3\n\n+${SIZE_P3}M\nw\n" | sudo fdisk $DEVICE_LOCATION
-    wait_for_device
+        # 3. partition -> cache
+        echo ""
+        echo "  - creating 'cache'"
+        printf "n\np\n3\n\n+${SIZE_P3}M\nw\n" | sudo fdisk $DEVICE_LOCATION
+        wait_for_device
 
-    # 4. partition -> userdata
-    echo ""
-    echo "  - creating 'userdata'"
-    printf "n\np\n\n\nw\n" | sudo fdisk $DEVICE_LOCATION
-    wait_for_device
+        # 4. partition -> userdata
+        echo ""
+        echo "  - creating 'userdata'"
+        printf "n\np\n\n\nw\n" | sudo fdisk $DEVICE_LOCATION
+        wait_for_device
 
-    # 5. set the partition type to "W95 FAT32 (LBA)"
-    echo ""
-    echo "  - setting correct partition type"
-    printf "t\n1\nc\nw\n" | sudo fdisk $DEVICE_LOCATION
-    wait_for_device
+        # 5. set the partition type to "W95 FAT32 (LBA)"
+        echo ""
+        echo "  - setting correct partition type"
+        printf "t\n1\nc\nw\n" | sudo fdisk $DEVICE_LOCATION
+        wait_for_device
 
-    # 6. set the first partition as bootable
-    echo ""
-    echo "  - setting bootable flag"
-    printf "a\n1\nw\n" | sudo fdisk $DEVICE_LOCATION
-    wait_for_device
+        # 6. set the first partition as bootable
+        echo ""
+        echo "  - setting bootable flag"
+        printf "a\n1\nw\n" | sudo fdisk $DEVICE_LOCATION
+        wait_for_device
+    fi
 
     echo ""
     echo " * Printing the new partition table..."
@@ -301,10 +330,14 @@ unmount_all()
     echo " * Unmounting mounted partitions..."
     sync
 
-    sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}1 > /dev/null 2>&1
-    sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}2 > /dev/null 2>&1
-    sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}3 > /dev/null 2>&1
-    sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}4 > /dev/null 2>&1
+    if [ "$NOOBS_INSTALL" = true ]; then # Modified for NOOBS
+        sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}1 > /dev/null 2>&1
+    else
+        sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}1 > /dev/null 2>&1
+        sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}2 > /dev/null 2>&1
+        sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}3 > /dev/null 2>&1
+        sudo umount -l ${DEVICE_LOCATION}${DEVICE_SUFFIX}4 > /dev/null 2>&1
+    fi
 }
 
 format_data()
@@ -339,16 +372,34 @@ format_system()
     echo " * Formatting system partitions..."
     local TEST=0
 
-    echo "  - formatting 'boot'"
-    echo ""
-    sudo mkfs.vfat -n boot -F 32 ${DEVICE_LOCATION}${DEVICE_SUFFIX}1
-    ((TEST+=$?))
+    if [ "$NOOBS_INSTALL" = true ]; then # Modified for NOOBS    
+    
+        # no partitioning was requested
+        if [ "$FORMAT" = false ]; then
+            echo " * Skipping NOOBS format..."
+            return
+        fi
+        
+        echo " * Formatting NOOBS partition..."
+        local TEST=0
+        echo ""
+        sudo mkfs.vfat -n boot -F 32 ${DEVICE_LOCATION}${DEVICE_SUFFIX}1
+        ((TEST+=$?))
+    else
+        echo " * Formatting system partitions..."
+        local TEST=0
+    
+        echo "  - formatting 'boot'"
+        echo ""
+        sudo mkfs.vfat -n boot -F 32 ${DEVICE_LOCATION}${DEVICE_SUFFIX}1
+        ((TEST+=$?))
 
-    echo ""
-    echo "  - formatting 'system'"
-    echo ""
-    sudo mkfs.ext4 -F -L system ${DEVICE_LOCATION}${DEVICE_SUFFIX}2
-    ((TEST+=$?))
+        echo ""
+        echo "  - formatting 'system'"
+        echo ""
+        sudo mkfs.ext4 -F -L system ${DEVICE_LOCATION}${DEVICE_SUFFIX}2
+        ((TEST+=$?))
+    fi
 
     if [[ $TEST -gt 0 ]]; then
         echo "ERR: an error occured while formatting system partitions."
@@ -373,21 +424,45 @@ copy_files()
         exit 1
     fi
 
+    NOOBS_DIR="./noobs"
+    if [ ! -d $NOOBS_DIR ]; then
+        echo "ERR: noobs directory not found!"
+        exit 1
+    fi
+
     echo "   - mounting the boot partition to $DIR_NAME"
     sudo rm -rf $DIR_NAME > /dev/null 2>&1
     sudo mkdir -p $DIR_NAME
     sudo mount -t vfat -o rw ${DEVICE_LOCATION}${DEVICE_SUFFIX}1 $DIR_NAME
 
-    echo "   - copying boot files"
-    sudo cp -fr $BOOT_DIR/* $DIR_NAME/
+    
+    if [ "$NOOBS_INSTALL" = true ]; then # Modified for NOOBS
+    
+        echo "   - creating NOOBS install tar"
+        sudo mkdir -p $DIR_NAME/os/Android
+        sudo tar -cvpf $DIR_NAME/os/Android/boot.tar ./$BOOT_DIR/*
+        echo "   - copying the NOOBS files"
+        sudo cp -fr $NOOBS_DIR/* $DIR_NAME/os/Android/ 
+        echo "   - copying the system.img"
+        sudo cp -r $SYSTEM_IMG $DIR_NAME/os/Android/ 
 
-    echo "   - unmounting the boot partition"
-    sync
-    sudo umount -l $DIR_NAME
-    sudo rm -rf $DIR_NAME
+        echo "   - unmounting the NOOBS partition"
+        sync
+        sudo umount -l $DIR_NAME
+        sudo rm -rf $DIR_NAME
+    else
+           
+        echo "   - copying boot files" 
+        sudo cp -fr $BOOT_DIR/* $DIR_NAME/
 
-    echo "   - writing the system image"
-    sudo dd if=$SYSTEM_IMG of=${DEVICE_LOCATION}${DEVICE_SUFFIX}2 bs=1M oflag=direct
+        echo "   - unmounting the boot partition"
+        sync
+        sudo umount -l $DIR_NAME
+        sudo rm -rf $DIR_NAME
+
+        echo "   - writing the system image"
+        sudo dd if=$SYSTEM_IMG of=${DEVICE_LOCATION}${DEVICE_SUFFIX}2 bs=1M oflag=direct
+    fi
 }
 
 
@@ -397,9 +472,10 @@ copy_files()
 
 
 # save the passed options
-while getopts ":fhp" flag; do
+while getopts ":fhnp" flag; do
 case $flag in
     "h") SHOW_HELP=true ;;
+    "n") NOOBS_INSTALL=true;;
     "p") PARTITION=true ;;
     "f") FORMAT=true ;;
     *)
