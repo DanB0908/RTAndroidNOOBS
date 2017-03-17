@@ -1,0 +1,151 @@
+#!/bin/sh
+
+# RTSPLIT - a script to convert a raw RTANDROID zip file for PINN
+# Usage - sudo rtsplit
+
+base=`pwd`
+
+if [ "$(id -u)" != "0" ]; then
+    echo "This script must be run as root" 2>&1
+    exit 1
+fi
+
+# set the following variables:
+# raw = folder of original raw image source  (folder above /raw and /resources FAT32)
+# dest = destination folder of converted image FAT32
+# script = the folder this script is run from (on an EXT4 drive)
+
+##################### STEP 1 #####################
+decompress()
+{
+	#Step 1
+	rm -rf $output
+	mkdir -p $output
+	cd $raw
+	echo "decompress the tarball"
+        unzip $srcfile.zip
+}
+
+##################### STEP 2 #####################
+mountimage()
+{
+	#Step 2
+	cd $raw
+
+}
+
+
+##################### STEP 3 #####################
+archiveimage()
+{
+    #Step 3
+    cd $raw
+    mkdir -p $output
+
+    echo "Tarring the boot partition"
+    cd boot #on det
+
+    tar cvf $output/boot.tar *
+    cd ..
+    cp system.img $output
+
+}
+
+##################### STEP 4 #####################
+cleanup1()
+{
+    #Step 4
+    echo "clean up"
+    cd $raw
+}
+
+##################### STEP 5 #####################
+Updateoutput()
+{
+    #Step 5
+    echo "Update the new dist folder"
+    cp $resources/${osname}_os.json $output/os.json
+    cp $resources/partition_setup.sh $output
+    cp $resources/partitions.json $output
+    cp $resources/${srcfolder}.png $output/${osname}.png
+    (cd $resources; tar xvf marketing.tar slides_vga)
+    cp $resources/marketing.tar $output
+    cp -r $resources/slides_vga $output
+    cp $resources/release_notes.txt $output
+    cp $resources/${osname}_flavours.json ${output}/flavours.json
+
+    cd $raw
+    echo "Update the JSON files"
+}
+
+##################### STEP 6 #####################
+compress()
+{
+    #Step 6
+    echo "Compressing boot tar file"
+    (cd $output; xz -k boot.tar)
+
+    echo "Compressing system img file"
+    (cd $output; gzip system.img)
+}
+
+##################### STEP 7 #####################
+cleanup2()
+{
+    #Step 7
+    echo "Clean up #2"
+
+    rm $raw/boot.tar >/dev/null
+    rm $raw/system.img >/dev/null
+    rm $raw/*.sh >/dev/null
+    rm -rf $raw/boot >/dev/null
+}
+
+#################### PROCESS #####################
+process()
+{
+    #$1 srcfolder
+    srcfolder=$1
+    #$2 New OS name folder
+    osname=$2
+    #$3 Compressed filename
+    srcfile=$3
+    echo "Processing " ${osname}
+
+    cd $base/$srcfolder
+    rootdir=`pwd`
+    raw=$rootdir/raw
+    resources=$rootdir/resources
+    output=$rootdir/output/${osname}
+
+
+
+    #-------------------- STEP 1 --------------------#
+        decompress
+
+    #-------------------- STEP 2 --------------------#
+        mountimage
+
+    #-------------------- STEP 3 --------------------#
+        archiveimage
+
+    #-------------------- STEP 4 --------------------#
+        cleanup1
+
+    #-------------------- STEP 5 --------------------#
+        Updateoutput
+
+    #-------------------- STEP 6 --------------------#
+        compress
+
+    #-------------------- STEP 7 --------------------#
+        cleanup2
+}
+
+###################### MAIN ######################
+
+
+#rtandroid
+    process rtandroid rtandroid rtandroid-aosp-7.1-20170315-rpi3
+
+echo "DONE"
